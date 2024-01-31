@@ -27,6 +27,7 @@ class AlignerAttention(nn.Module):
             :param:
                 attn -> Attention: Attention module in transformer layer       
         """
+        super().__init__()
         self.embed_dim = proj_weight.size[-1]
         self.proj_q, self.proj_k, self.proj_v = [nn.Parameter(i, requires_grad = False) for i in proj_weight.chunk(3)] # Each of size (embed_dim, embed_dim)
 
@@ -104,6 +105,7 @@ class MaskAligner(nn.Module):
     Aligner + MaskGit model
     """
     def __init__(self, pretrain_model, num_prefix_tok, hidden_dim):
+        super().__init__()
         for params in pretrain_model.parameters():
             params.requires_grad = False
 
