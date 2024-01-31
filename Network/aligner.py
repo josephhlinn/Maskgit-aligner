@@ -28,7 +28,7 @@ class AlignerAttention(nn.Module):
                 attn -> Attention: Attention module in transformer layer       
         """
         super().__init__()
-        self.embed_dim = proj_weight.size[-1]
+        self.embed_dim = proj_weight.shape[-1]
         self.proj_q, self.proj_k, self.proj_v = [nn.Parameter(i, requires_grad = False) for i in proj_weight.chunk(3)] # Each of size (embed_dim, embed_dim)
 
     def forward(self, x, tok):
@@ -119,13 +119,13 @@ class MaskAligner(nn.Module):
         # First layer before the Transformer block
         self.first_layer = pretrain_model.first_layer
 
-        self.transformer = TransformerEncoderAligner(pt_model.transformer, hidden_dim, num_prefix_tok)
+        self.transformer = TransformerEncoderAligner(pretrain_model.transformer, hidden_dim, num_prefix_tok)
 
         # Last layer after the Transformer block
-        self.last_layer = pt_model.last_layer
+        self.last_layer = pretrain_model.last_layer
 
         # Bias for the last linear output
-        self.bias = pt_model.bias
+        self.bias = pretrain_model.bias
 
     def forward(self, img_token, y=None, drop_label=None, return_attn=False):
         """ Forward.
