@@ -30,6 +30,7 @@ class AlignerAttention(nn.Module):
         super().__init__()
         self.embed_dim = proj_weight.shape[-1]
         self.proj_q, self.proj_k, self.proj_v = [nn.Parameter(i, requires_grad = False) for i in proj_weight.chunk(3)] # Each of size (embed_dim, embed_dim)
+        self.dropout_p = dropout_p
 
     def forward(self, x, tok):
         """ Forward pass through the Attention module.
@@ -48,7 +49,7 @@ class AlignerAttention(nn.Module):
         v = F.linear(tok, self.proj_v) # (N, T, embed_dim)
         attention_weight = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.embed_dim) # (N, S, T)
         attention_weight = F.softmax(attention_weight, dim = -1)
-        attention_weight = F.dropout(attention_weight, dropout_p, train = True) 
+        attention_weight = F.dropout(attention_weight, self.dropout_p, train = True) 
         attention_value = torch.matmul(attention_weight, v) # (N, S, embed_dim)
         return attention_value, attention_weight
 
@@ -93,7 +94,7 @@ class TransformerEncoderAligner(nn.Module):
             attn, ff = self.transformer.layers[i]
             gate = self.gates[i]
             attention_value, attention_weight = attn(x)
-            prefix_attn_value, prefix_attn_weight = p_attn(x, {'tok': self.prefix_token})
+            prefix_attn_value, prefix_attn_weight = p_attn(x, tok = self.prefix_token)
             attention_value = attention_value + gate*prefix_attn_value
             x = attention_value + x
             x = ff(x) + x
