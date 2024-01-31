@@ -93,7 +93,7 @@ class TransformerEncoderAligner(nn.Module):
             attn, ff = self.transformer.layers[i]
             gate = self.gates[i]
             attention_value, attention_weight = attn(x)
-            prefix_attn_value, prefix_attn_weight = p_attn(x, self.prefix_token)
+            prefix_attn_value, prefix_attn_weight = p_attn(x, {'tok': self.prefix_token})
             attention_value = attention_value + gate*prefix_attn_value
             x = attention_value + x
             x = ff(x) + x
