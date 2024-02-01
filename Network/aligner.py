@@ -49,7 +49,7 @@ class AlignerAttention(nn.Module):
         v = F.linear(tok, self.proj_v) # (N, T, embed_dim)
         attention_weight = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.embed_dim) # (N, S, T)
         attention_weight = F.softmax(attention_weight, dim = -1)
-        attention_weight = F.dropout(attention_weight, self.dropout_p, train = True) 
+        attention_weight = F.dropout(attention_weight, self.dropout_p, training = True) 
         attention_value = torch.matmul(attention_weight, v) # (N, S, embed_dim)
         return attention_value, attention_weight
 
