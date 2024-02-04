@@ -4,7 +4,6 @@ from torch import nn
 
 
 class PreNorm(nn.Module):
-
     def __init__(self, dim, fn):
         """ PreNorm module to apply layer normalization before a given function
             :param:
@@ -111,7 +110,6 @@ class TransformerEncoder(nn.Module):
             l_attn.append(attention_weight)
         return x, l_attn
 
-
 class MaskTransformer(nn.Module):
     def __init__(self, img_size=256, hidden_dim=768, codebook_size=1024, depth=24, heads=8, mlp_dim=3072, dropout=0.1, nclass=1000):
         """ Initialize the Transformer model.
@@ -130,6 +128,7 @@ class MaskTransformer(nn.Module):
         self.nclass = nclass
         self.patch_size = img_size // 16
         self.codebook_size = codebook_size
+        self.hidden_dim = hidden_dim
         self.tok_emb = nn.Embedding(codebook_size+1+nclass+1, hidden_dim)  # +1 for the mask of the viz token, +1 for mask of the class
         self.pos_emb = nn.init.trunc_normal_(nn.Parameter(torch.zeros(1, (self.patch_size*self.patch_size)+1, hidden_dim)), 0., 0.02)
 
@@ -171,9 +170,11 @@ class MaskTransformer(nn.Module):
         """
         b, w, h = img_token.size()
 
-        cls_token = y.view(b, -1) + self.codebook_size + 1  # Shift the class token by the amount of codebook
-
-        cls_token[drop_label] = self.codebook_size + 1 + self.nclass  # Drop condition
+        if y is None:
+            cls_token = torch.full(b, self.codebook_size + 1 + self.n_class).view(b, -1)  # Shift the class token by the amount of codebook
+        else:
+            cls_token = y.view(b, -1) + self.codebook_size + 1  # Shift the class token by the amount of codebook
+            cls_token[drop_label] = self.codebook_size + 1 + self.nclass  # Drop condition
         input = torch.cat([img_token.view(b, -1), cls_token.view(b, -1)], -1)  # concat visual tokens and class tokens
         tok_embeddings = self.tok_emb(input)
 

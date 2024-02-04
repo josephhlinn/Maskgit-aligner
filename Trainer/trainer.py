@@ -4,7 +4,7 @@ import json
 
 import numpy as np
 from PIL import Image
-import webdataset as wds
+# import webdataset as wds
 
 import torch
 import torch.nn as nn

@@ -8,12 +8,12 @@ import argparse
 import torch
 from torch.distributed import init_process_group, destroy_process_group
 
-from Trainer.vit import MaskGIT
+from Network.aligner import MaskGITAligner
 
 
 def main(args):
     """ Main function:Train or eval MaskGIT """
-    maskgit = MaskGIT(args)
+    maskgit = MaskGITAligner(args) 
 
     if args.test_only:  # Evaluate the networks
         maskgit.eval()
@@ -58,26 +58,29 @@ def launch_multi_main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data",         type=str,   default="imagenet", help="dataset on which dataset to train")
+    parser.add_argument("--data",         type=str,   default="wikiart", help="dataset on which dataset to train")
+    parser.add_argument("--artist",       type=str,   default="Albrecht_Durer", help="artist to fine-tune on")
+    parser.add_argument("--num_train_images", type=int, default=5,       help="number of images to train on")
     parser.add_argument("--data-folder",  type=str,   default="",         help="folder containing the dataset")
-    parser.add_argument("--vqgan-folder", type=str,   default="",         help="folder of the pretrained VQGAN")
-    parser.add_argument("--vit-folder",   type=str,   default="",         help="folder where to save the Transformer")
-    parser.add_argument("--writer-log",   type=str,   default="",         help="folder where to store the logs")
+    parser.add_argument("--vqgan-folder", type=str,   default="./models/mask-aligner/pretrained_maskgit/VQGAN/",         help="folder of the pretrained VQGAN")
+    parser.add_argument("--vit-folder",   type=str,   default="./models/mask-aligner/pretrained_maskgit/MaskGIT/MaskGIT_ImageNet_512.pth",         help="folder where to save the Transformer")
+    parser.add_argument("--writer-log",   type=str,   default="",         help="folder where to store the logs, defaults to ./runs")
     parser.add_argument("--sched_mode",   type=str,   default="arccos",   help="scheduler mode whent sampling")
     parser.add_argument("--grad-cum",     type=int,   default=1,          help="accumulate gradient")
     parser.add_argument('--channel',      type=int,   default=3,          help="rgb or black/white image")
     parser.add_argument("--num_workers",  type=int,   default=8,          help="number of workers")
     parser.add_argument("--step",         type=int,   default=8,          help="number of step for sampling")
     parser.add_argument('--seed',         type=int,   default=42,         help="fix seed")
-    parser.add_argument("--epoch",        type=int,   default=300,        help="number of epoch")
-    parser.add_argument('--img-size',     type=int,   default=256,        help="image size")
-    parser.add_argument("--bsize",        type=int,   default=256,        help="batch size")
-    parser.add_argument("--mask-value",   type=int,   default=1024,       help="number of epoch")
+    parser.add_argument("--epoch",        type=int,   default=5,          help="number of epoch")
+    parser.add_argument('--img-size',     type=int,   default=512,        help="image size")
+    parser.add_argument("--bsize",        type=int,   default=2,          help="batch size")
+    parser.add_argument("--mask-value",   type=int,   default=1024,       help="codebook mask token")
     parser.add_argument("--lr",           type=float, default=1e-4,       help="learning rate to train the transformer")
     parser.add_argument("--cfg_w",        type=float, default=3,          help="classifier free guidance wight")
     parser.add_argument("--r_temp",       type=float, default=4.5,        help="Gumbel noise temperature when sampling")
     parser.add_argument("--sm_temp",      type=float, default=1.,         help="temperature before softmax when sampling")
-    parser.add_argument("--drop-label",   type=float, default=0.1,        help="drop rate for cfg")
+    parser.add_argument("--drop-label",   type=float, default=1,          help="drop rate for cfg")
+    parser.add_argument("--num_prefix_tok", type=int, default=10,         help="number of prefix tokens for aligner")
     parser.add_argument("--test-only",    action='store_true',            help="only evaluate the model")
     parser.add_argument("--resume",       action='store_true',            help="resume training of the model")
     parser.add_argument("--debug",        action='store_true',            help="debug")
@@ -85,6 +88,7 @@ if __name__ == "__main__":
     args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.iter = 0
     args.global_epoch = 0
+    args.resume = True
 
     if args.seed > 0: # Set the seed for reproducibility
         torch.manual_seed(args.seed)
@@ -105,3 +109,4 @@ if __name__ == "__main__":
         args.is_master = True
         args.is_multi_gpus = False
         main(args)
+

@@ -21,6 +21,7 @@ from Network.transformer import MaskTransformer
 from Network.Taming.models.vqgan import VQModel
 
 
+
 class MaskGIT(Trainer):
 
     def __init__(self, args):
@@ -77,7 +78,7 @@ class MaskGIT(Trainer):
 
         elif archi == "autoencoder":
             # Load config
-            config = OmegaConf.load(self.args.vqgan_folder + "model.yaml")
+            config = OmegaConf.load(os.path.join(self.args.vqgan_folder, "model.yaml"))
             model = VQModel(**config.model.params)
             checkpoint = torch.load(self.args.vqgan_folder + "last.ckpt", map_location="cpu")["state_dict"]
             # Load network
@@ -415,3 +416,4 @@ class MaskGIT(Trainer):
 
         self.vit.train()
         return x, l_codes, l_mask
+

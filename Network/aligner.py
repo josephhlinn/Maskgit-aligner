@@ -20,9 +20,12 @@ from Trainer.vit import MaskGIT
 from Network.transformer import MaskTransformer, PreNorm
 
 from Network.Taming.models.vqgan import VQModel
+from dataset.datasets import ArtDataset
+from torch.utils.data.distributed import DistributedSampler
+from torch.utils.data import DataLoader
 
 class AlignerAttention(nn.Module):
-    def __init__(self, proj_weight, dropout_p = 0.):
+    def __init__(self, proj_weight, dropout_p = 0., mask = None):
         """ Initialize the Aligner Attention module. 
             :param:
                 attn -> Attention: Attention module in transformer layer       
@@ -48,6 +51,8 @@ class AlignerAttention(nn.Module):
         k = F.linear(tok, self.proj_k) # (N, T, embed_dim)
         v = F.linear(tok, self.proj_v) # (N, T, embed_dim)
         attention_weight = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.embed_dim) # (N, S, T)
+        # if mask is not None:
+        #     attention_weight = attention_weight.masked_fill(mask == 0, -9e15)
         attention_weight = F.softmax(attention_weight, dim = -1)
         attention_weight = F.dropout(attention_weight, self.dropout_p, training = True) 
         attention_value = torch.matmul(attention_weight, v) # (N, S, embed_dim)
@@ -68,8 +73,8 @@ class TransformerEncoderAligner(nn.Module):
         self.transformer = transformer
         self.layers = nn.ModuleList([])
         self.gates = nn.ParameterList([])
-        self.prefix_token = nn.Parameter(torch.rand(num_prefix_tok, dim))
-
+        # self.prefix_token = nn.Parameter(torch.rand(num_prefix_tok, dim))
+        self.prefix_token = nn.Embedding(num_prefix_tok, dim)
         # Initialize aligner layers and gates per transformer layer
         for attn, _ in self.transformer.layers:
             self.layers.append(
@@ -94,72 +99,112 @@ class TransformerEncoderAligner(nn.Module):
             attn, ff = self.transformer.layers[i]
             gate = self.gates[i]
             attention_value, attention_weight = attn(x)
-            prefix_attn_value, prefix_attn_weight = p_attn(x, tok = self.prefix_token)
+            prefix_attn_value, prefix_attn_weight = p_attn(x, tok = self.prefix_token.weight)
             attention_value = attention_value + gate*prefix_attn_value
             x = attention_value + x
             x = ff(x) + x
             l_attn.append(attention_weight)
         return x, l_attn
     
-class MaskAligner(nn.Module):
+# class MaskAligner(nn.Module):
+#     """
+#     Aligner + MaskGit model
+#     """
+#     def __init__(self, pretrain_model, num_prefix_tok, hidden_dim):
+#         super().__init__()
+#         for params in pretrain_model.parameters():
+#             params.requires_grad = False
+
+#         self.pretrain_model = pretrain_model
+#         self.nclass = pretrain_model.nclass
+#         self.patch_size = pretrain_model.patch_size
+#         self.codebook_size = pretrain_model.codebook_size
+#         self.tok_emb = pretrain_model.tok_emb
+#         self.pos_emb = pretrain_model.pos_emb
+#         self.num_prefix_tok = num_prefix_tok # Prefix token dimensions
+#         # First layer before the Transformer block
+#         self.first_layer = pretrain_model.first_layer
+
+#         self.transformer = TransformerEncoderAligner(pretrain_model.transformer, pretrain_model.hidden_dim, num_prefix_tok)
+
+#         # Last layer after the Transformer block
+#         self.last_layer = pretrain_model.last_layer
+
+#         # Bias for the last linear output
+#         self.bias = pretrain_model.bias
+
+#     def forward(self, img_token, y=None, drop_label=None, return_attn=False):
+#         """ Forward.
+#             :param:
+#                 img_token      -> torch.LongTensor: bsize x 16 x 16, the encoded image tokens
+#                 y              -> torch.LongTensor: condition class to generate
+#                 drop_label     -> torch.BoolTensor: either or not to drop the condition
+#                 return_attn    -> Bool: return the attn for visualization
+#             :return:
+#                 logit:         -> torch.FloatTensor: bsize x path_size*path_size * 1024, the predicted logit
+#                 attn:          -> list(torch.FloatTensor): list of attention for visualization
+#         """
+#         b, w, h = img_token.size()
+
+#         cls_token = y.view(b, -1) + self.codebook_size + 1  # Shift the class token by the amount of codebook
+
+#         cls_token[drop_label] = self.codebook_size + 1 + self.nclass  # Drop condition
+#         input = torch.cat([img_token.view(b, -1), cls_token.view(b, -1)], -1)  # concat visual tokens and class tokens
+#         tok_embeddings = self.tok_emb(input)
+
+#         # Position embedding
+#         pos_embeddings = self.pos_emb
+#         x = tok_embeddings + pos_embeddings
+
+#         # transformer forward pass
+#         x = self.first_layer(x)
+#         x, attn = self.transformer(x)
+#         x = self.last_layer(x)
+
+#         logit = torch.matmul(x, self.tok_emb.weight.T) + self.bias   # Shared layer with the embedding
+
+#         if return_attn:  # return list of attention
+#             return logit[:, :self.patch_size * self.patch_size, :self.codebook_size + 1], attn
+
+#         return logit[:, :self.patch_size*self.patch_size, :self.codebook_size+1]
+
+
+class MaskGITAligner(MaskGIT):
     """
-    Aligner + MaskGit model
+    Trainer for pre-trained MaskGIT with aligner. Freezes maskgit layers and only trains on prefix tokens. 
     """
-    def __init__(self, pretrain_model, num_prefix_tok, hidden_dim):
-        super().__init__()
-        for params in pretrain_model.parameters():
+    def __init__(self, args):
+        super().__init__(args)
+        self.freeze_layers()
+        self.num_prefix_tok = args.num_prefix_tok
+        self.vit.transformer = self.get_aligner()
+        
+    def freeze_layers(self):
+        for params in self.vit.parameters():
             params.requires_grad = False
 
-        self.pretrain_model = pretrain_model
-        self.nclass = pretrain_model.nclass
-        self.patch_size = pretrain_model.patch_size
-        self.codebook_size = pretrain_model.codebook_size
-        self.tok_emb = pretrain_model.tok_emb
-        self.pos_emb = pretrain_model.pos_emb
-        self.num_prefix_tok = num_prefix_tok # Prefix token dimensions
-        # First layer before the Transformer block
-        self.first_layer = pretrain_model.first_layer
+    def get_aligner(self):
+        return TransformerEncoderAligner(self.vit.transformer, self.vit.hidden_dim, self.num_prefix_tok).to(self.args.device)
 
-        self.transformer = TransformerEncoderAligner(pretrain_model.transformer, hidden_dim, num_prefix_tok)
+    def get_data(self):
+        cwd = os.getcwd()
+        data_dir = "./models/mask-aligner/dataset/wikiart/"
 
-        # Last layer after the Transformer block
-        self.last_layer = pretrain_model.last_layer
-
-        # Bias for the last linear output
-        self.bias = pretrain_model.bias
-
-    def forward(self, img_token, y=None, drop_label=None, return_attn=False):
-        """ Forward.
-            :param:
-                img_token      -> torch.LongTensor: bsize x 16 x 16, the encoded image tokens
-                y              -> torch.LongTensor: condition class to generate
-                drop_label     -> torch.BoolTensor: either or not to drop the condition
-                return_attn    -> Bool: return the attn for visualization
-            :return:
-                logit:         -> torch.FloatTensor: bsize x path_size*path_size * 1024, the predicted logit
-                attn:          -> list(torch.FloatTensor): list of attention for visualization
-        """
-        b, w, h = img_token.size()
-
-        cls_token = y.view(b, -1) + self.codebook_size + 1  # Shift the class token by the amount of codebook
-
-        cls_token[drop_label] = self.codebook_size + 1 + self.nclass  # Drop condition
-        input = torch.cat([img_token.view(b, -1), cls_token.view(b, -1)], -1)  # concat visual tokens and class tokens
-        tok_embeddings = self.tok_emb(input)
-
-        # Position embedding
-        pos_embeddings = self.pos_emb
-        x = tok_embeddings + pos_embeddings
-
-        # transformer forward pass
-        x = self.first_layer(x)
-        x, attn = self.transformer(x)
-        x = self.last_layer(x)
-
-        logit = torch.matmul(x, self.tok_emb.weight.T) + self.bias   # Shared layer with the embedding
-
-        if return_attn:  # return list of attention
-            return logit[:, :self.patch_size * self.patch_size, :self.codebook_size + 1], attn
-
-        return logit[:, :self.patch_size*self.patch_size, :self.codebook_size+1]
+        train_dataset = ArtDataset(data_dir, self.args.artist, self.args.num_train_images, split = "train")
+        val_dataset = ArtDataset(data_dir, self.args.artist, self.args.num_train_images, split = "val")
+        
+        
+        train_sampler = DistributedSampler(train_dataset, shuffle=True) if self.args.is_multi_gpus else None
+        test_sampler = DistributedSampler(val_dataset, shuffle=True) if self.args.is_multi_gpus else None
+        
+        train_loader = DataLoader(train_dataset, batch_size=self.args.bsize,
+                                  shuffle=False if self.args.is_multi_gpus else True,
+                                  num_workers=self.args.num_workers, pin_memory=True,
+                                  drop_last=True, sampler=train_sampler)
+        val_loader = DataLoader(val_dataset, batch_size=self.args.bsize,
+                                  shuffle=False if self.args.is_multi_gpus else True,
+                                  num_workers=self.args.num_workers, pin_memory=True,
+                                  drop_last=True, sampler=test_sampler)
+        
+        return train_loader, val_loader
 
