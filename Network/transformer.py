@@ -63,6 +63,8 @@ class Attention(nn.Module):
         super(Attention, self).__init__()
         self.dim = embed_dim
         self.mha = nn.MultiheadAttention(embed_dim, num_heads=num_heads, dropout=dropout, batch_first=True, bias=True)
+        self.n_head = num_heads
+        self.head_dim = self.dim//self.n_head
 
     def forward(self, x):
         """ Forward pass through the Attention module.
@@ -72,8 +74,8 @@ class Attention(nn.Module):
                 attention_value  -> torch.Tensor: Output the value of the attention
                 attention_weight -> torch.Tensor: Output the weight of the attention
         """
-        attention_value, attention_weight = self.mha(x, x, x)
-        return attention_value, attention_weight
+        attention_value, attention_weight = self.mha(x, x, x, average_attn_weights = False)
+        return attention_value, attention_weight    
 
 
 class TransformerEncoder(nn.Module):

@@ -68,6 +68,7 @@ class MaskGIT(Trainer):
                 # Update the current epoch and iteration
                 self.args.iter += checkpoint['iter']
                 self.args.global_epoch += checkpoint['global_epoch']
+                self.args.initial_epoch = self.args.global_epoch
                 # Load network
                 model.load_state_dict(checkpoint['model_state_dict'], strict=False)
 
@@ -162,7 +163,7 @@ class MaskGIT(Trainer):
         sche[-1] += (self.patch_size * self.patch_size) - sche.sum()         # need to sum up nb of code
         return tqdm(sche.int(), leave=leave)
 
-    def train_one_epoch(self, log_iter=2500):
+    def train_one_epoch(self, log_iter=10):
         """ Train the model for 1 epoch """
         self.vit.train()
         cum_loss = 0.
@@ -200,7 +201,11 @@ class MaskGIT(Trainer):
 
             if update_grad:
                 self.scaler.unscale_(self.optim)                      # rescale loss
-                nn.utils.clip_grad_norm_(self.vit.parameters(), 1.0)  # Clip gradient
+                nn.utils.clip_grad_norm_(self.vit.parameters(), 1)  # Clip gradient
+                for name, params in self.vit.named_parameters():
+                    if params.requires_grad:
+                        if params.grad.isnan().sum().item() != 0:
+                            raise ValueError(f"NaN in gradient layer {name}")
                 self.scaler.step(self.optim)
                 self.scaler.update()
 
@@ -217,12 +222,12 @@ class MaskGIT(Trainer):
                 self.log_add_img("Images/Sampling", gen_sample, self.args.iter)
                 # Show reconstruction
                 unmasked_code = torch.softmax(pred, -1).max(-1)[1]
-                reco_sample = self.reco(x=x[:10], code=code[:10], unmasked_code=unmasked_code[:10], mask=mask[:10])
-                reco_sample = vutils.make_grid(reco_sample.data, nrow=10, padding=2, normalize=True)
+                reco_sample = self.reco(x=x[:8], code=code[:8], unmasked_code=unmasked_code[:8], mask=mask[:10])
+                reco_sample = vutils.make_grid(reco_sample.data, nrow=8, padding=2, normalize=True)
                 self.log_add_img("Images/Reconstruction", reco_sample, self.args.iter)
 
                 # Save Network
-                self.save_network(model=self.vit, path=self.args.vit_folder+"current.pth",
+                self.save_network(model=self.vit, path=self.args.vit_folder+"_aligner_current.pth",
                                   iter=self.args.iter, optimizer=self.optim, global_epoch=self.args.global_epoch)
 
             self.args.iter += 1
@@ -236,7 +241,7 @@ class MaskGIT(Trainer):
 
         start = time.time()
         # Start training
-        for e in range(self.args.global_epoch, self.args.epoch):
+        for e in range(self.args.global_epoch, self.args.initial_epoch + self.args.epoch):
             # synch every GPUs
             if self.args.is_multi_gpus:
                 self.train_data.sampler.set_epoch(e)
@@ -249,7 +254,7 @@ class MaskGIT(Trainer):
                 train_loss = self.all_gather(train_loss, torch.cuda.device_count())
 
             # Save model
-            if e % 10 == 0 and self.args.is_master:
+            if e % 1 == 0 and self.args.is_master:
                 self.save_network(model=self.vit, path=self.args.vit_folder + f"epoch_{self.args.global_epoch:03d}.pth",
                                   iter=self.args.iter, optimizer=self.optim, global_epoch=self.args.global_epoch)
 
@@ -335,7 +340,8 @@ class MaskGIT(Trainer):
         with torch.no_grad():
             if labels is None:  # Default classes generated
                 # goldfish, chicken, tiger cat, hourglass, ship, dog, race car, airliner, teddy bear, random
-                labels = [1, 7, 282, 604, 724, 179, 751, 404, 850, random.randint(0, 999)] * (nb_sample // 10)
+                # labels = [1, 7, 282, 604, 724, 179, 751, 404, 850, random.randint(0, 999)] * (nb_sample // 10)
+                labels = [1, 2, 3, 4, 5, 6, 7, 8, 9, random.randint(0, 10)] * (nb_sample // 10)
                 labels = torch.LongTensor(labels).to(self.args.device)
 
             drop = torch.ones(nb_sample, dtype=torch.bool).to(self.args.device)
@@ -375,10 +381,10 @@ class MaskGIT(Trainer):
                         logit = (1 + _w) * logit_c - _w * logit_u
                     else:
                         logit = self.vit(code.clone(), labels, drop_label=~drop)
-
+                logit = torch.nan_to_num(logit, 0)
                 prob = torch.softmax(logit * sm_temp, -1)
                 # Sample the code from the softmax prediction
-                distri = torch.distributions.Categorical(probs=prob)
+                distri = torch.distributions.Categorical(probs=prob, validate_args=False)
                 pred_code = distri.sample()
 
                 conf = torch.gather(prob, 2, pred_code.view(nb_sample, self.patch_size*self.patch_size, 1))
