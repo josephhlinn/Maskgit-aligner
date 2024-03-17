@@ -111,6 +111,7 @@ class MaskGIT(Trainer):
             mask        -> torch.LongTensor(): bsize * 16 * 16, the binary mask of the mask
         """
         r = torch.rand(code.size(0))
+    
         if mode == "linear":                # linear scheduler
             val_to_mask = r
         elif mode == "square":              # square scheduler
@@ -122,6 +123,7 @@ class MaskGIT(Trainer):
         else:
             val_to_mask = None
 
+        
         mask_code = code.detach().clone()
         # Sample the amount of tokens + localization to mask
         mask = torch.rand(size=code.size()) < val_to_mask.view(code.size(0), 1, 1)
@@ -185,7 +187,7 @@ class MaskGIT(Trainer):
                 code = code.reshape(x.size(0), self.patch_size, self.patch_size)
 
             # Mask the encoded tokens
-            masked_code, mask = self.get_mask_code(code, value=self.args.mask_value)
+            masked_code, mask = self.get_mask_code(code, mode = self.args.sched_mode, value=self.args.mask_value)
 
             with torch.cuda.amp.autocast():                             # half precision
                 pred = self.vit(masked_code, y, drop_label=drop_label)  # The unmasked tokens prediction
@@ -227,7 +229,7 @@ class MaskGIT(Trainer):
                 self.log_add_img("Images/Reconstruction", reco_sample, self.args.iter)
 
                 # Save Network
-                self.save_network(model=self.vit, path=self.args.vit_folder+"_aligner_current.pth",
+                self.save_network(model=self.vit, path=self.args.save_folder+f"_{self.args.model_version}_current.pth",
                                   iter=self.args.iter, optimizer=self.optim, global_epoch=self.args.global_epoch)
 
             self.args.iter += 1
@@ -254,9 +256,9 @@ class MaskGIT(Trainer):
                 train_loss = self.all_gather(train_loss, torch.cuda.device_count())
 
             # Save model
-            if e % 1 == 0 and self.args.is_master:
-                self.save_network(model=self.vit, path=self.args.vit_folder + f"epoch_{self.args.global_epoch:03d}.pth",
-                                  iter=self.args.iter, optimizer=self.optim, global_epoch=self.args.global_epoch)
+            # if e % 100 == 0 and self.args.is_master:
+            #     self.save_network(model=self.vit, path=self.args.writer_log+f"/{self.args.model_version}_epoch_{self.args.global_epoch:03d}.pth",
+            #                       iter=self.args.iter, optimizer=self.optim, global_epoch=self.args.global_epoch)
 
             # Clock time
             clock_time = (time.time() - start)
